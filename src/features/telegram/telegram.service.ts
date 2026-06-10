@@ -20,8 +20,8 @@ export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
 
   constructor(private config: ConfigService) {
-    this.bot = new Telegraf(this.config.get<string>('TELEGRAM_BOT_TOKEN'));
-    this.chatId = this.config.get<string>('TELEGRAM_CHAT_ID');
+    this.bot = new Telegraf(this.config.get<string>('TELEGRAM_BOT_TOKEN')!);
+    this.chatId = this.config.get<string>('TELEGRAM_CHAT_ID')!;
   }
 
   async sendReservationNotification(data: NotificationData) {
