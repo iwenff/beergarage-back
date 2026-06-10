@@ -9,7 +9,7 @@ export class TablesService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(date?: string, timeStart?: string, timeEnd?: string) {
-    const tables = await this.prisma.table.findMany();
+    const tables = await this.prisma.db.table.findMany();
 
     if (!date || !timeStart || !timeEnd) {
       return tables.map((t) => ({ ...t, isAvailable: null }));
@@ -25,27 +25,27 @@ export class TablesService {
   }
 
   async create(dto: CreateTableDto) {
-    return this.prisma.table.create({ data: dto });
+    return this.prisma.db.table.create({ data: dto });
   }
 
   async update(id: number, dto: UpdateTableDto) {
     await this.ensureExists(id);
-    return this.prisma.table.update({ where: { id }, data: dto });
+    return this.prisma.db.table.update({ where: { id }, data: dto });
   }
 
   async remove(id: number) {
     await this.ensureExists(id);
-    return this.prisma.table.delete({ where: { id } });
+    return this.prisma.db.table.delete({ where: { id } });
   }
 
   async findFreeForSlot(date: Date, timeStart: string, timeEnd: string) {
-    const allTables = await this.prisma.table.findMany();
+    const allTables = await this.prisma.db.table.findMany();
     const occupiedIds = await this.getOccupiedTableIds(date, timeStart, timeEnd);
     return allTables.filter((t) => !occupiedIds.has(t.id));
   }
 
   private async getOccupiedTableIds(date: Date, timeStart: string, timeEnd: string) {
-    const occupied = await this.prisma.reservation.findMany({
+    const occupied = await this.prisma.db.reservation.findMany({
       where: {
         date,
         status: { not: ReservationStatus.CANCELLED as any },
@@ -57,7 +57,7 @@ export class TablesService {
   }
 
   private async ensureExists(id: number) {
-    const table = await this.prisma.table.findUnique({ where: { id } });
+    const table = await this.prisma.db.table.findUnique({ where: { id } });
     if (!table) throw new NotFoundException(`Table ${id} not found`);
     return table;
   }
