@@ -16,7 +16,7 @@ export class ReservationsService {
     private telegram: TelegramService,
   ) {}
 
-  async create(userId: number, dto: CreateReservationDto) {
+  async create(dto: CreateReservationDto) {
     const date = new Date(dto.date);
 
     const table = await this.prisma.table.findUnique({ where: { id: dto.tableId } });
@@ -34,14 +34,15 @@ export class ReservationsService {
 
     const reservation = await this.prisma.reservation.create({
       data: {
-        userId,
-        tableId: dto.tableId,
+        tableId:    dto.tableId,
         date,
-        timeStart: dto.timeStart,
-        timeEnd: dto.timeEnd,
+        timeStart:  dto.timeStart,
+        timeEnd:    dto.timeEnd,
         guestsCount: dto.guestsCount,
+        guestName:  dto.guestName,
+        guestPhone: dto.guestPhone,
       },
-      include: { user: true, table: true },
+      include: { table: true },
     });
 
     const freeTables = await this.getFreeTables(date, dto.timeStart, dto.timeEnd, dto.tableId);
@@ -49,13 +50,13 @@ export class ReservationsService {
     this.telegram
       .sendReservationNotification({
         tableLabel: reservation.table.label,
-        date: reservation.date,
-        timeStart: reservation.timeStart,
-        timeEnd: reservation.timeEnd,
+        date:       reservation.date,
+        timeStart:  reservation.timeStart,
+        timeEnd:    reservation.timeEnd,
         guestsCount: reservation.guestsCount,
-        clientName: reservation.user.name,
-        clientPhone: reservation.user.phone,
-        freeTables: freeTables.map((t) => ({ label: t.label, capacity: t.capacity })),
+        clientName:  reservation.guestName,
+        clientPhone: reservation.guestPhone,
+        freeTables:  freeTables.map((t) => ({ label: t.label, capacity: t.capacity })),
       })
       .catch(() => {});
 

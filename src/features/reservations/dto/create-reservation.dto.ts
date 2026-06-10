@@ -1,4 +1,4 @@
-import { IsInt, IsDateString, IsString, Min, Matches } from 'class-validator';
+import { IsInt, IsDateString, IsString, IsPhoneNumber, Min, Matches } from 'class-validator';
 
 export class CreateReservationDto {
   @IsInt()
@@ -18,4 +18,10 @@ export class CreateReservationDto {
   @IsInt()
   @Min(1)
   guestsCount: number;
+
+  @IsString()
+  guestName: string;
+
+  @IsString()
+  guestPhone: string;
 }
