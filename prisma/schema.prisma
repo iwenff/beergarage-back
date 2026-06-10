@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CLIENT
+  STAFF
+  ADMIN
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+model User {
+  id              Int           @id @default(autoincrement())
+  name            String
+  phone           String
+  email           String        @unique
+  passwordHash    String
+  role            Role          @default(CLIENT)
+  discountPercent Int           @default(0)
+  createdAt       DateTime      @default(now())
+  reservations    Reservation[]
+}
+
+model Table {
+  id           Int           @id @default(autoincrement())
+  label        String        @unique
+  capacity     Int
+  positionX    Float
+  positionY    Float
+  reservations Reservation[]
+}
+
+model Reservation {
+  id          Int               @id @default(autoincrement())
+  userId      Int
+  tableId     Int
+  date        DateTime          @db.Date
+  timeStart   String
+  timeEnd     String
+  guestsCount Int
+  status      ReservationStatus @default(PENDING)
+  createdAt   DateTime          @default(now())
+  user        User              @relation(fields: [userId], references: [id])
+  table       Table             @relation(fields: [tableId], references: [id])
+}
