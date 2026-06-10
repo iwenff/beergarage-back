@@ -19,10 +19,10 @@ export class ReservationsService {
   async create(userId: number, dto: CreateReservationDto) {
     const date = new Date(dto.date);
 
-    const table = await this.prisma.db.table.findUnique({ where: { id: dto.tableId } });
+    const table = await this.prisma.table.findUnique({ where: { id: dto.tableId } });
     if (!table) throw new NotFoundException('Table not found');
 
-    const conflict = await this.prisma.db.reservation.findFirst({
+    const conflict = await this.prisma.reservation.findFirst({
       where: {
         tableId: dto.tableId,
         date,
@@ -32,7 +32,7 @@ export class ReservationsService {
     });
     if (conflict) throw new BadRequestException('Table is already reserved for this time slot');
 
-    const reservation = await this.prisma.db.reservation.create({
+    const reservation = await this.prisma.reservation.create({
       data: {
         userId,
         tableId: dto.tableId,
@@ -63,7 +63,7 @@ export class ReservationsService {
   }
 
   async findByUser(userId: number) {
-    return this.prisma.db.reservation.findMany({
+    return this.prisma.reservation.findMany({
       where: { userId },
       include: { table: true },
       orderBy: { createdAt: 'desc' },
@@ -71,7 +71,7 @@ export class ReservationsService {
   }
 
   async findAll() {
-    return this.prisma.db.reservation.findMany({
+    return this.prisma.reservation.findMany({
       include: { user: true, table: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -88,7 +88,7 @@ export class ReservationsService {
       throw new BadRequestException('Reservation is already cancelled');
     }
 
-    return this.prisma.db.reservation.update({
+    return this.prisma.reservation.update({
       where: { id },
       data: { status: ReservationStatus.CANCELLED as any },
     });
@@ -101,21 +101,21 @@ export class ReservationsService {
       throw new BadRequestException('Reservation is already confirmed');
     }
 
-    return this.prisma.db.reservation.update({
+    return this.prisma.reservation.update({
       where: { id },
       data: { status: ReservationStatus.CONFIRMED as any },
     });
   }
 
   private async ensureExists(id: number) {
-    const reservation = await this.prisma.db.reservation.findUnique({ where: { id } });
+    const reservation = await this.prisma.reservation.findUnique({ where: { id } });
     if (!reservation) throw new NotFoundException(`Reservation ${id} not found`);
     return reservation;
   }
 
   private async getFreeTables(date: Date, timeStart: string, timeEnd: string, excludeTableId: number) {
-    const allTables = await this.prisma.db.table.findMany();
-    const occupied = await this.prisma.db.reservation.findMany({
+    const allTables = await this.prisma.table.findMany();
+    const occupied = await this.prisma.reservation.findMany({
       where: {
         date,
         status: { not: ReservationStatus.CANCELLED as any },
