@@ -49,6 +49,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     if (!this.config.get('TELEGRAM_BOT_TOKEN')) return;
     this.bot.launch().catch((err) => this.logger.warn('Bot polling error', err));
+    this.bot.telegram.setMyCommands([
+      { command: 'bookings', description: '📋 Активные брони на сегодня' },
+      { command: 'today',    description: '📅 Все брони сегодня' },
+      { command: 'free',     description: '🟢 Свободные места прямо сейчас' },
+      { command: 'help',     description: '❓ Список всех команд' },
+    ]).catch(() => {});
   }
 
   onModuleDestroy() {
@@ -122,6 +128,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       let m: RegExpMatchArray | null;
 
       // Simple commands
+      if (text === '/start' || text === '/help') { await this.cmdHelp(ctx); return; }
       if (text === '/bookings') { await this.cmdBookings(ctx); return; }
       if (text === '/today')    { await this.cmdToday(ctx); return; }
       if (text === '/free')     { await this.cmdFree(ctx); return; }
@@ -142,6 +149,37 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ─── Commands ─────────────────────────────────────────────────────────────
+
+  private async cmdHelp(ctx: any) {
+    const lines = [
+      '🍺 Управление бронями Beer Garage',
+      '',
+      '📋 Основные команды:',
+      '/bookings — активные брони на сегодня',
+      '/today — все брони сегодня (включая отменённые)',
+      '/free — свободные места прямо сейчас',
+      '',
+      '🔍 Информация о брони:',
+      '/status_5 — подробности брони №5',
+      '',
+      '✅ Управление бронью:',
+      '/confirm_5 — подтвердить бронь №5',
+      '/cancel_5 — отменить бронь №5',
+      '/delete_5 — удалить бронь №5 (только отменённую)',
+      '',
+      '✏️ Редактирование брони:',
+      '/edit_5 — меню редактирования брони №5',
+      '/edit_5_date — изменить дату',
+      '/edit_5_time — изменить время',
+      '/edit_5_guests — изменить количество гостей',
+      '/edit_5_table — пересадить за другой стол',
+      '/edit_5_name — изменить имя гостя',
+      '/edit_5_phone — изменить телефон',
+      '',
+      '💡 Замените 5 на нужный номер брони',
+    ];
+    await ctx.reply(lines.join('\n'));
+  }
 
   private async cmdBookings(ctx: any) {
     try {
