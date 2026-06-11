@@ -21,6 +21,7 @@ model Chair {
   label             String
   positionX         Int
   positionY         Int
+  blockedManually   Boolean            @default(false)
   table             Table              @relation(fields: [tableId], references: [id])
   reservationChairs ReservationChair[]
 }
@@ -46,14 +47,12 @@ model ReservationChair {
 }
 
 model User {
-  id              Int      @id @default(autoincrement())
-  name            String?
-  phone           String?
-  email           String?  @unique
-  passwordHash    String?
-  role            Role     @default(CLIENT)
-  discountPercent Int      @default(0)
-  createdAt       DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  login        String   @unique
+  passwordHash String
+  role         Role     @default(CLIENT)
+  name         String?
+  createdAt    DateTime @default(now())
 }
 
 enum Role {

@@ -19,7 +19,13 @@ export class TablesService {
         label: t.label,
         positionX: t.positionX,
         positionY: t.positionY,
-        chairs: t.chairs.map((c) => ({ id: c.id, label: c.label, positionX: c.positionX, positionY: c.positionY, status: 'free' })),
+        chairs: t.chairs.map((c) => ({
+          id: c.id,
+          label: c.label,
+          positionX: c.positionX,
+          positionY: c.positionY,
+          status: c.blockedManually ? 'reserved' : 'free',
+        })),
       }));
     }
 
@@ -35,7 +41,7 @@ export class TablesService {
         label: c.label,
         positionX: c.positionX,
         positionY: c.positionY,
-        status: reservedChairIds.has(c.id) ? 'reserved' : 'free',
+        status: c.blockedManually || reservedChairIds.has(c.id) ? 'reserved' : 'free',
       })),
     }));
   }

@@ -12,12 +12,12 @@ export enum ReservationStatus {
 
 export type JwtPayload = {
   sub: number;
-  email: string;
+  login: string;
   role: string;
 };
 
 export type AuthenticatedUser = {
   id: number;
-  email: string;
+  login: string;
   role: string;
 };
