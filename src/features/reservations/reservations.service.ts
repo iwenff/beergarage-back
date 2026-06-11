@@ -53,7 +53,7 @@ export class ReservationsService {
       },
     });
 
-    this.sendTelegramNotification(dto, chairs).catch(() => {});
+    this.sendNewReservationNotification(dto, chairs).catch(() => {});
 
     return reservation;
   }
@@ -74,10 +74,29 @@ export class ReservationsService {
       throw new BadRequestException('Бронь уже отменена');
     }
 
-    return this.prisma.reservation.update({
+    const updated = await this.prisma.reservation.update({
       where: { id },
       data: { status: 'CANCELLED' as any },
+      include: {
+        chairs: { include: { chair: { include: { table: true } } } },
+      },
     });
+
+    this.telegram
+      .sendCancellation(id, {
+        guestName: updated.guestName,
+        guestPhone: updated.guestPhone,
+        date: updated.date,
+        timeStart: updated.timeStart,
+        timeEnd: updated.timeEnd,
+        chairs: updated.chairs.map((rc) => ({
+          label: rc.chair.label,
+          tableLabel: rc.chair.table.label,
+        })),
+      })
+      .catch(() => {});
+
+    return updated;
   }
 
   async confirm(id: number) {
@@ -87,13 +106,32 @@ export class ReservationsService {
       throw new BadRequestException('Бронь уже подтверждена');
     }
 
-    return this.prisma.reservation.update({
+    const updated = await this.prisma.reservation.update({
       where: { id },
       data: { status: 'CONFIRMED' as any },
+      include: {
+        chairs: { include: { chair: { include: { table: true } } } },
+      },
     });
+
+    this.telegram
+      .sendConfirmation(id, {
+        guestName: updated.guestName,
+        guestPhone: updated.guestPhone,
+        date: updated.date,
+        timeStart: updated.timeStart,
+        timeEnd: updated.timeEnd,
+        chairs: updated.chairs.map((rc) => ({
+          label: rc.chair.label,
+          tableLabel: rc.chair.table.label,
+        })),
+      })
+      .catch(() => {});
+
+    return updated;
   }
 
-  private async sendTelegramNotification(
+  private async sendNewReservationNotification(
     dto: CreateReservationDto,
     chairs: { label: string; table: { label: string } }[],
   ) {
@@ -109,7 +147,7 @@ export class ReservationsService {
     });
     const freeChairsCount = allChairs - reservedAfter;
 
-    await this.telegram.sendReservationNotification({
+    await this.telegram.sendNewReservation({
       guestName: dto.guestName,
       guestPhone: dto.guestPhone,
       date: dto.date,
