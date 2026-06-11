@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { formatDateRu, formatCreatedAtRu, todayStr, currentTimeStr } from '../../shared/utils/date.util';
 
@@ -17,7 +17,6 @@ type ReservationInfo = {
   timeEnd: string;
   chairs: { label: string; tableLabel: string }[];
 };
-
 type NewReservationData = ReservationInfo & { freeChairsCount: number };
 
 const CHAIR_INCLUDE = {
@@ -33,7 +32,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private readonly chatOwner: string;
   private readonly chatStaff: string;
   private readonly logger = new Logger(TelegramService.name);
-  private readonly sessionState = new Map<number, SessionEntry>();
+  private readonly session = new Map<number, SessionEntry>();
 
   constructor(
     private config: ConfigService,
@@ -43,7 +42,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     this.chatMain  = this.config.get<string>('TELEGRAM_CHAT_ID') ?? '';
     this.chatOwner = this.config.get<string>('TELEGRAM_CHAT_ID_OWNER') ?? '';
     this.chatStaff = this.config.get<string>('TELEGRAM_CHAT_ID_STAFF') ?? '';
-    this.setupBotHandlers();
+    this.setupHandlers();
   }
 
   onModuleInit() {
@@ -53,12 +52,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       { command: 'bookings', description: '📋 Активные брони на сегодня' },
       { command: 'today',    description: '📅 Все брони сегодня' },
       { command: 'free',     description: '🟢 Свободные места прямо сейчас' },
-      { command: 'help',     description: '❓ Список всех команд' },
+      { command: 'help',     description: '❓ Справка' },
     ]).catch(() => {});
   }
 
   onModuleDestroy() {
-    this.bot.stop('NestJS shutdown');
+    this.bot.stop('shutdown');
   }
 
   // ─── Public notifications ─────────────────────────────────────────────────
@@ -70,7 +69,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       `👤 Гость: ${data.guestName}`,
       `📞 Телефон: ${data.guestPhone}`,
       `📅 Дата: ${formatDateRu(data.date)}`,
-      `⏰ Время: ${data.timeStart} - ${data.timeEnd}`,
+      `⏰ Время: ${data.timeStart} — ${data.timeEnd}`,
       `👥 Количество персон: ${data.chairs.length}`,
       `🪑 Места: ${rcGroupByLabel(data.chairs)}`,
       '',
@@ -83,11 +82,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const message = [
       `🚫 Бронь #${reservationId} отменена`,
       '',
-      `👤 Гость: ${data.guestName}`,
-      `📞 Телефон: ${data.guestPhone}`,
-      `📅 Дата: ${formatDateRu(data.date)}`,
-      `⏰ Время: ${data.timeStart} - ${data.timeEnd}`,
-      `🪑 Места: ${rcGroupByLabel(data.chairs)}`,
+      `👤 ${data.guestName}`,
+      `📞 ${data.guestPhone}`,
+      `📅 ${formatDateRu(data.date)}`,
+      `⏰ ${data.timeStart} — ${data.timeEnd}`,
+      `🪑 ${rcGroupByLabel(data.chairs)}`,
     ].join('\n');
     await this.broadcast([this.chatMain, this.chatOwner, this.chatStaff], message);
   }
@@ -96,337 +95,268 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const message = [
       `✅ Бронь #${reservationId} подтверждена`,
       '',
-      `👤 Гость: ${data.guestName}`,
-      `📞 Телефон: ${data.guestPhone}`,
-      `📅 Дата: ${formatDateRu(data.date)}`,
-      `⏰ Время: ${data.timeStart} - ${data.timeEnd}`,
-      `🪑 Места: ${rcGroupByLabel(data.chairs)}`,
+      `👤 ${data.guestName}`,
+      `📞 ${data.guestPhone}`,
+      `📅 ${formatDateRu(data.date)}`,
+      `⏰ ${data.timeStart} — ${data.timeEnd}`,
+      `🪑 ${rcGroupByLabel(data.chairs)}`,
     ].join('\n');
     await this.broadcast([this.chatStaff, this.chatMain], message);
   }
 
-  // ─── Bot setup ────────────────────────────────────────────────────────────
+  // ─── Handler setup ────────────────────────────────────────────────────────
 
-  private setupBotHandlers() {
-    const allowedChats = new Set([this.chatMain, this.chatOwner, this.chatStaff].filter(Boolean));
+  private setupHandlers() {
+    const allowed = new Set([this.chatMain, this.chatOwner, this.chatStaff].filter(Boolean));
+    const guard = (ctx: any) => {
+      const id = String(ctx.chat?.id ?? ctx.callbackQuery?.message?.chat?.id ?? '');
+      return allowed.size === 0 || allowed.has(id);
+    };
 
+    // ── Inline button callbacks ──────────────────────────────────────────────
+    this.bot.on('callback_query', async (ctx) => {
+      if (!guard(ctx)) { await ctx.answerCbQuery(); return; }
+      const data: string = (ctx.callbackQuery as any).data ?? '';
+      await ctx.answerCbQuery();
+
+      const userId = ctx.from?.id ?? 0;
+      this.session.delete(userId); // кнопка сбрасывает ожидание ввода
+
+      const [action, idStr, extra] = data.split(':');
+      const id = parseInt(idStr, 10);
+
+      try {
+        switch (action) {
+          case 'confirm':      await this.cbConfirm(id, ctx); break;
+          case 'cancel':       await this.cbCancel(id, ctx); break;
+          case 'delete':       await this.cbDelete(id, ctx); break;
+          case 'status':       await this.cbStatus(id, ctx); break;
+          case 'edit':         await this.cbEditMenu(id, ctx); break;
+          case 'edit_date':    await this.cbEditField(id, 'date', userId, ctx); break;
+          case 'edit_time':    await this.cbEditField(id, 'time', userId, ctx); break;
+          case 'edit_guests':  await this.cbEditField(id, 'guests', userId, ctx); break;
+          case 'edit_name':    await this.cbEditField(id, 'name', userId, ctx); break;
+          case 'edit_phone':   await this.cbEditField(id, 'phone', userId, ctx); break;
+          case 'edit_table':   await this.cbEditTable(id, ctx); break;
+          case 'select_table': await this.cbSelectTable(id, extra, ctx); break;
+        }
+      } catch (err) {
+        this.logger.error(`Callback error (${action})`, err);
+        await ctx.reply('❌ Произошла ошибка, попробуйте ещё раз').catch(() => {});
+      }
+    });
+
+    // ── Text messages ────────────────────────────────────────────────────────
     this.bot.on('text', async (ctx) => {
-      const chatId = String(ctx.chat?.id ?? '');
-      if (allowedChats.size > 0 && !allowedChats.has(chatId)) return;
-
-      const text = ctx.message.text;
+      if (!guard(ctx)) return;
+      const text: string = ctx.message.text;
       const userId = ctx.from?.id ?? 0;
 
-      // Session: user is waiting to input a value (date/time/etc.)
-      const session = this.sessionState.get(userId);
-      if (session && !text.startsWith('/')) {
-        await this.processSessionInput(userId, session, text, ctx);
+      // Ожидание ввода (дата / время / имя / телефон / кол-во гостей)
+      const s = this.session.get(userId);
+      if (s && !text.startsWith('/')) {
+        await this.processInput(userId, s, text, ctx);
         return;
       }
-      if (session) this.sessionState.delete(userId); // command cancels session
+      if (s) this.session.delete(userId);
 
-      let m: RegExpMatchArray | null;
-
-      // Simple commands
-      if (text === '/start' || text === '/help') { await this.cmdHelp(ctx); return; }
-      if (text === '/bookings') { await this.cmdBookings(ctx); return; }
-      if (text === '/today')    { await this.cmdToday(ctx); return; }
-      if (text === '/free')     { await this.cmdFree(ctx); return; }
-
-      // Parameterised commands
-      if ((m = text.match(/^\/confirm_(\d+)$/)))   { await this.cmdConfirm(+m[1], ctx); return; }
-      if ((m = text.match(/^\/cancel_(\d+)$/)))    { await this.cmdCancel(+m[1], ctx); return; }
-      if ((m = text.match(/^\/delete_(\d+)$/)))    { await this.cmdDelete(+m[1], ctx); return; }
-      if ((m = text.match(/^\/status_(\d+)$/)))    { await this.cmdStatus(+m[1], ctx); return; }
-      if ((m = text.match(/^\/edit_(\d+)$/)))      { await this.cmdEdit(+m[1], ctx); return; }
-      if ((m = text.match(/^\/edit_(\d+)_(date|time|guests|table|name|phone)$/))) {
-        await this.cmdEditField(+m[1], m[2] as EditField | 'table', userId, ctx); return;
-      }
-      if ((m = text.match(/^\/table_(\d+)_(.+)$/))) {
-        await this.cmdSelectTable(+m[1], m[2], ctx); return;
-      }
+      if (text === '/bookings' || text === '/start') { await this.cmdBookings(ctx); return; }
+      if (text === '/today')                          { await this.cmdToday(ctx); return; }
+      if (text === '/free')                           { await this.cmdFree(ctx); return; }
+      if (text === '/help')                           { await this.cmdHelp(ctx); return; }
     });
   }
 
-  // ─── Commands ─────────────────────────────────────────────────────────────
+  // ─── Text commands ────────────────────────────────────────────────────────
 
   private async cmdHelp(ctx: any) {
-    const lines = [
-      '🍺 Управление бронями Beer Garage',
-      '',
-      '📋 Основные команды:',
-      '/bookings — активные брони на сегодня',
-      '/today — все брони сегодня (включая отменённые)',
-      '/free — свободные места прямо сейчас',
-      '',
-      '🔍 Информация о брони:',
-      '/status_5 — подробности брони №5',
-      '',
-      '✅ Управление бронью:',
-      '/confirm_5 — подтвердить бронь №5',
-      '/cancel_5 — отменить бронь №5',
-      '/delete_5 — удалить бронь №5 (только отменённую)',
-      '',
-      '✏️ Редактирование брони:',
-      '/edit_5 — меню редактирования брони №5',
-      '/edit_5_date — изменить дату',
-      '/edit_5_time — изменить время',
-      '/edit_5_guests — изменить количество гостей',
-      '/edit_5_table — пересадить за другой стол',
-      '/edit_5_name — изменить имя гостя',
-      '/edit_5_phone — изменить телефон',
-      '',
-      '💡 Замените 5 на нужный номер брони',
-    ];
-    await ctx.reply(lines.join('\n'));
+    await ctx.reply(
+      [
+        '🍺 Управление бронями Beer Garage',
+        '',
+        'Используйте кнопки меню:',
+        '📋 /bookings — брони на сегодня',
+        '📅 /today — все брони сегодня',
+        '🟢 /free — свободные места сейчас',
+        '',
+        'У каждой брони есть кнопки для управления.',
+        'Нажмите нужную кнопку — бот спросит что именно изменить.',
+      ].join('\n'),
+    );
   }
 
   private async cmdBookings(ctx: any) {
-    try {
-      const today = todayStr();
-      const reservations = await this.prisma.reservation.findMany({
-        where: { date: today, status: { not: 'CANCELLED' as any } },
-        include: CHAIR_INCLUDE,
-        orderBy: { timeStart: 'asc' },
-      });
+    const today = todayStr();
+    const reservations = await this.prisma.reservation.findMany({
+      where: { date: today, status: { not: 'CANCELLED' as any } },
+      include: CHAIR_INCLUDE,
+      orderBy: { timeStart: 'asc' },
+    });
 
-      if (!reservations.length) {
-        await ctx.reply('📋 Активных броней на сегодня нет'); return;
-      }
+    if (!reservations.length) {
+      await ctx.reply('📋 Активных броней на сегодня нет');
+      return;
+    }
 
-      const SEP = '━━━━━━━━━━━━━━━━━━━━';
-      const lines = [`📋 Активные брони на сегодня:`];
-
-      for (const r of reservations) {
-        lines.push('', SEP);
-        lines.push(`🆔 Бронь #${r.id}`);
-        lines.push(`👤 ${r.guestName} | 📞 ${r.guestPhone}`);
-        lines.push(`📅 ${formatDateRu(r.date)}`);
-        lines.push(`⏰ ${r.timeStart} - ${r.timeEnd}`);
-        lines.push(`👥 Персон: ${r.chairs.length}`);
-        lines.push(`🪑 ${rcGroupByDb(r.chairs)}`);
-        lines.push(`📌 Статус: ${statusLabel(r.status)}`);
-        lines.push('');
-        lines.push(`/confirm_${r.id} - подтвердить`);
-        lines.push(`/cancel_${r.id} - отменить`);
-        lines.push(`/edit_${r.id} - редактировать`);
-        lines.push(`/delete_${r.id} - удалить`);
-      }
-      lines.push('', SEP);
-
-      await ctx.reply(lines.join('\n'));
-    } catch (err) {
-      this.logger.error('/bookings error', err);
-      await ctx.reply('❌ Ошибка при загрузке броней');
+    await ctx.reply(`📋 Активные брони на сегодня — ${formatDateRu(today)}:`);
+    for (const r of reservations) {
+      await ctx.reply(bookingText(r), mkActionKeyboard(r.id, r.status));
     }
   }
 
   private async cmdToday(ctx: any) {
-    try {
-      const today = todayStr();
-      const reservations = await this.prisma.reservation.findMany({
-        where: { date: today },
-        include: CHAIR_INCLUDE,
-        orderBy: { timeStart: 'asc' },
-      });
+    const today = todayStr();
+    const reservations = await this.prisma.reservation.findMany({
+      where: { date: today },
+      include: CHAIR_INCLUDE,
+      orderBy: { timeStart: 'asc' },
+    });
 
-      const dateLabel = formatDateRu(today);
-      if (!reservations.length) {
-        await ctx.reply(`📅 Броней на сегодня (${dateLabel}) нет`); return;
-      }
-
-      let pending = 0, confirmed = 0, cancelled = 0;
-      const lines = [`📅 Брони на сегодня - ${dateLabel}`, ''];
-
-      for (const r of reservations) {
-        if (r.status === 'PENDING') pending++;
-        else if (r.status === 'CONFIRMED') confirmed++;
-        else cancelled++;
-
-        const emoji = r.status === 'CONFIRMED' ? '✅' : r.status === 'CANCELLED' ? '❌' : '⏳';
-        const tables = [...new Set(r.chairs.map((rc: any) => `Стол ${rc.chair.table.label}`))].join(', ');
-        lines.push(`${emoji} #${r.id} ${r.guestName} | ${r.timeStart}-${r.timeEnd} | ${tables} | ${r.chairs.length} чел`);
-      }
-
-      lines.push('');
-      lines.push(`Всего: ${reservations.length} | Ожидает: ${pending} | Подтверждено: ${confirmed} | Отменено: ${cancelled}`);
-      await ctx.reply(lines.join('\n'));
-    } catch (err) {
-      this.logger.error('/today error', err);
+    if (!reservations.length) {
+      await ctx.reply(`📅 Броней на ${formatDateRu(today)} нет`);
+      return;
     }
+
+    let pending = 0, confirmed = 0, cancelled = 0;
+    const lines = [`📅 Брони на сегодня — ${formatDateRu(today)}`, ''];
+    for (const r of reservations) {
+      if (r.status === 'PENDING') pending++;
+      else if (r.status === 'CONFIRMED') confirmed++;
+      else cancelled++;
+      const emoji = r.status === 'CONFIRMED' ? '✅' : r.status === 'CANCELLED' ? '❌' : '⏳';
+      const tables = [...new Set(r.chairs.map((rc: any) => `Стол ${rc.chair.table.label}`))].join(', ');
+      lines.push(`${emoji} #${r.id} ${r.guestName} | ${r.timeStart}–${r.timeEnd} | ${tables} | ${r.chairs.length} чел`);
+    }
+    lines.push('', `Всего: ${reservations.length} | Ожидает: ${pending} | Подтверждено: ${confirmed} | Отменено: ${cancelled}`);
+    await ctx.reply(lines.join('\n'));
   }
 
   private async cmdFree(ctx: any) {
-    try {
-      const today = todayStr();
-      const now = currentTimeStr();
+    const today = todayStr();
+    const now = currentTimeStr();
+    const tables = await this.prisma.table.findMany({ include: { chairs: true }, orderBy: { id: 'asc' } });
+    const reservedIds = await this.getReservedIds(today, now, now);
 
-      const tables = await this.prisma.table.findMany({
-        include: { chairs: true },
-        orderBy: { id: 'asc' },
-      });
-      const reservedIds = await this.getReservedChairIds(today, now, now);
-
-      const lines = ['🟢 Свободные места прямо сейчас:', ''];
-      let anyFree = false;
-
-      for (const t of tables) {
-        const free = t.chairs.filter((c) => !c.blockedManually && !reservedIds.has(c.id)).length;
-        if (free > 0) {
-          anyFree = true;
-          lines.push(`Стол ${t.label} - ${free} из ${t.chairs.length} ${pluralize(free, 'место', 'места', 'мест')} свободно`);
-        }
+    const lines = ['🟢 Свободные места прямо сейчас:', ''];
+    let anyFree = false;
+    for (const t of tables) {
+      const free = t.chairs.filter((c) => !c.blockedManually && !reservedIds.has(c.id)).length;
+      if (free > 0) {
+        anyFree = true;
+        lines.push(`Стол ${t.label} — ${free} из ${t.chairs.length} ${pluralize(free, 'место', 'места', 'мест')} свободно`);
       }
-
-      if (!anyFree) { await ctx.reply('🔴 Свободных мест прямо сейчас нет'); return; }
-      await ctx.reply(lines.join('\n'));
-    } catch (err) {
-      this.logger.error('/free error', err);
     }
+    await ctx.reply(anyFree ? lines.join('\n') : '🔴 Свободных мест прямо сейчас нет');
   }
 
-  private async cmdConfirm(id: number, ctx: any) {
+  // ─── Inline-button callbacks ──────────────────────────────────────────────
+
+  private async cbConfirm(id: number, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
     if (r.status === 'CONFIRMED') { await ctx.reply(`Бронь #${id} уже подтверждена`); return; }
-    if (r.status === 'CANCELLED') { await ctx.reply(`❌ Бронь #${id} отменена — нельзя подтвердить`); return; }
+    if (r.status === 'CANCELLED') { await ctx.reply(`❌ Бронь #${id} отменена — невозможно подтвердить`); return; }
 
     await this.prisma.reservation.update({ where: { id }, data: { status: 'CONFIRMED' } });
-    await ctx.reply(`✅ Бронь #${id} подтверждена`);
-    await this.sendConfirmation(id, this.toInfo(r)).catch(() => {});
+    const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
+    await ctx.editMessageText(bookingText(updated!), mkActionKeyboard(id, 'CONFIRMED')).catch(() => {});
+    await this.sendConfirmation(id, this.toInfo(updated!)).catch(() => {});
   }
 
-  private async cmdCancel(id: number, ctx: any) {
+  private async cbCancel(id: number, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
     if (r.status === 'CANCELLED') { await ctx.reply(`Бронь #${id} уже отменена`); return; }
 
     await this.prisma.reservation.update({ where: { id }, data: { status: 'CANCELLED' } });
-    await ctx.reply(`🚫 Бронь #${id} отменена`);
+    const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
+    await ctx.editMessageText(bookingText(updated!), mkActionKeyboard(id, 'CANCELLED')).catch(() => {});
     await this.sendCancellation(id, this.toInfo(r)).catch(() => {});
   }
 
-  private async cmdDelete(id: number, ctx: any) {
+  private async cbDelete(id: number, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id } });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
     if (r.status !== 'CANCELLED') {
-      await ctx.reply(`❌ Удалить можно только отменённую бронь. Статус: ${r.status}`); return;
+      await ctx.reply(`❌ Удалить можно только отменённую бронь\nТекущий статус: ${statusLabel(r.status)}`);
+      return;
     }
     await this.prisma.reservationChair.deleteMany({ where: { reservationId: id } });
     await this.prisma.reservation.delete({ where: { id } });
+    await ctx.deleteMessage().catch(() => {});
     await ctx.reply(`🗑 Бронь #${id} удалена`);
     await this.broadcast([this.chatMain, this.chatOwner, this.chatStaff], `🗑 Бронь #${id} удалена`).catch(() => {});
   }
 
-  private async cmdStatus(id: number, ctx: any) {
+  private async cbStatus(id: number, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
-
-    const lines = [
-      `📋 Бронь #${r.id}`,
-      '',
-      `👤 ${r.guestName}`,
-      `📞 ${r.guestPhone}`,
-      `📅 ${formatDateRu(r.date)}`,
-      `⏰ ${r.timeStart} - ${r.timeEnd}`,
-      `👥 Персон: ${r.chairs.length}`,
-      `🪑 ${rcGroupByDb(r.chairs)}`,
-      `📌 Статус: ${statusLabel(r.status)}`,
-      `🕐 Создана: ${formatCreatedAtRu(r.createdAt)}`,
-      '',
-      `/confirm_${r.id} | /cancel_${r.id} | /edit_${r.id} | /delete_${r.id}`,
-    ];
-    await ctx.reply(lines.join('\n'));
+    const text = bookingText(r) + `\n🕐 Создана: ${formatCreatedAtRu(r.createdAt)}`;
+    await ctx.editMessageText(text, mkActionKeyboard(id, r.status)).catch(async () => {
+      await ctx.reply(text, mkActionKeyboard(id, r.status));
+    });
   }
 
-  private async cmdEdit(id: number, ctx: any) {
+  private async cbEditMenu(id: number, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id } });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
-
-    const lines = [
-      `✏️ Редактирование брони #${id}`,
-      `${r.guestName} | ${r.timeStart}-${r.timeEnd} | ${formatDateRu(r.date)}`,
-      '',
-      'Что хотите изменить?',
-      '',
-      `/edit_${id}_date - изменить дату`,
-      `/edit_${id}_time - изменить время`,
-      `/edit_${id}_guests - изменить количество гостей`,
-      `/edit_${id}_table - изменить стол`,
-      `/edit_${id}_name - изменить имя гостя`,
-      `/edit_${id}_phone - изменить телефон`,
-    ];
-    await ctx.reply(lines.join('\n'));
+    const header = `✏️ Редактирование брони #${id}\n${r.guestName} | ${r.timeStart}–${r.timeEnd} | ${formatDateRu(r.date)}\n\nЧто изменить?`;
+    await ctx.editMessageText(header, mkEditKeyboard(id)).catch(async () => {
+      await ctx.reply(header, mkEditKeyboard(id));
+    });
   }
 
-  private async cmdEditField(id: number, field: EditField | 'table', userId: number, ctx: any) {
+  private async cbEditField(id: number, field: EditField, userId: number, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
 
-    if (field === 'table') {
-      await this.showTableSelection(id, r, ctx); return;
-    }
-
     const prompts: Record<EditField, string> = {
-      date: [
-        `📅 Введите новую дату для брони #${id}`,
-        `Текущая дата: ${formatDateRu(r.date)}`,
-        'Формат: ДД.ММ.ГГГГ (например 25.12.2024)',
-      ].join('\n'),
-      time: [
-        `⏰ Введите новое время для брони #${id}`,
-        `Текущее время: ${r.timeStart} - ${r.timeEnd}`,
-        'Формат: ЧЧ:ММ-ЧЧ:ММ (например 19:00-23:00)',
-      ].join('\n'),
-      guests: [
-        `👥 Введите новое количество гостей для брони #${id}`,
-        `Текущее количество: ${r.chairs.length}`,
-        'Введите число от 1 до 20',
-      ].join('\n'),
-      name: [
-        `👤 Введите новое имя гостя для брони #${id}`,
-        `Текущее имя: ${r.guestName}`,
-      ].join('\n'),
-      phone: [
-        `📞 Введите новый телефон для брони #${id}`,
-        `Текущий телефон: ${r.guestPhone}`,
-      ].join('\n'),
+      date: `📅 Введите новую дату для брони #${id}\nТекущая: ${formatDateRu(r.date)}\nФормат: ДД.ММ.ГГГГ`,
+      time: `⏰ Введите новое время для брони #${id}\nТекущее: ${r.timeStart}–${r.timeEnd}\nФормат: ЧЧ:ММ–ЧЧ:ММ`,
+      guests: `👥 Введите количество гостей для брони #${id}\nСейчас: ${r.chairs.length}\nВведите число от 1 до 20`,
+      name: `👤 Введите новое имя гостя для брони #${id}\nСейчас: ${r.guestName}`,
+      phone: `📞 Введите новый телефон для брони #${id}\nСейчас: ${r.guestPhone}`,
     };
 
-    this.sessionState.set(userId, { action: field, reservationId: id });
+    this.session.set(userId, { action: field, reservationId: id });
     await ctx.reply(prompts[field]);
   }
 
-  private async showTableSelection(id: number, r: any, ctx: any) {
-    const tables = await this.prisma.table.findMany({
-      include: { chairs: true },
-      orderBy: { id: 'asc' },
-    });
+  private async cbEditTable(id: number, ctx: any) {
+    const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
+    if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
 
-    const otherReservedIds = await this.getReservedChairIdsExcluding(r.date, r.timeStart, r.timeEnd, id);
-    const neededCount: number = r.chairs.length;
+    const tables = await this.prisma.table.findMany({ include: { chairs: true }, orderBy: { id: 'asc' } });
+    const otherReserved = await this.getReservedIdsExcluding(r.date, r.timeStart, r.timeEnd, id);
+    const needed: number = r.chairs.length;
 
-    const lines = [
-      `🪑 Выберите новый стол для брони #${id}`,
-      `Нужно мест: ${neededCount}`,
-      '',
-      `Доступные столы на ${formatDateRu(r.date)} ${r.timeStart}-${r.timeEnd}:`,
-    ];
+    const rows = tables
+      .map((t) => {
+        const free = t.chairs.filter((c) => !c.blockedManually && !otherReserved.has(c.id)).length;
+        return { t, free };
+      })
+      .filter(({ free }) => free >= needed)
+      .map(({ t, free }) => [
+        Markup.button.callback(
+          `Стол ${t.label} — ${free} своб.`,
+          `select_table:${id}:${t.label.toLowerCase()}`,
+        ),
+      ]);
 
-    let found = false;
-    for (const t of tables) {
-      const available = t.chairs.filter((c) => !c.blockedManually && !otherReservedIds.has(c.id));
-      if (available.length >= neededCount) {
-        found = true;
-        lines.push(`/table_${id}_${t.label.toLowerCase()} - Стол ${t.label} (всего ${t.chairs.length}, свободно ${available.length})`);
-      }
+    if (!rows.length) {
+      await ctx.reply(`❌ Нет столов с ${needed} свободными местами на это время`);
+      return;
     }
-    if (!found) lines.push('Нет доступных столов с достаточным количеством мест');
 
-    await ctx.reply(lines.join('\n'));
+    rows.push([Markup.button.callback('◀️ Назад', `edit:${id}`)]);
+
+    await ctx.reply(
+      `🪑 Выберите стол для брони #${id}\nНужно мест: ${needed} | ${formatDateRu(r.date)} ${r.timeStart}–${r.timeEnd}`,
+      Markup.inlineKeyboard(rows),
+    );
   }
 
-  private async cmdSelectTable(reservationId: number, tableLabel: string, ctx: any) {
+  private async cbSelectTable(reservationId: number, tableLabel: string, ctx: any) {
     const r = await this.prisma.reservation.findUnique({ where: { id: reservationId }, include: CHAIR_INCLUDE });
     if (!r) { await ctx.reply(`❌ Бронь #${reservationId} не найдена`); return; }
 
@@ -434,64 +364,59 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       where: { label: { mode: 'insensitive', equals: tableLabel } },
       include: { chairs: true },
     });
-    if (!table) { await ctx.reply(`❌ Стол не найден`); return; }
+    if (!table) { await ctx.reply('❌ Стол не найден'); return; }
 
-    const neededCount: number = r.chairs.length;
-    const otherReservedIds = await this.getReservedChairIdsExcluding(r.date, r.timeStart, r.timeEnd, reservationId);
-    const available = table.chairs.filter((c) => !c.blockedManually && !otherReservedIds.has(c.id));
+    const otherReserved = await this.getReservedIdsExcluding(r.date, r.timeStart, r.timeEnd, reservationId);
+    const needed: number = r.chairs.length;
+    const available = table.chairs.filter((c) => !c.blockedManually && !otherReserved.has(c.id));
 
-    if (available.length < neededCount) {
-      await ctx.reply(`❌ Недостаточно мест. Нужно: ${neededCount}, свободно: ${available.length}`); return;
+    if (available.length < needed) {
+      await ctx.reply(`❌ Недостаточно мест: нужно ${needed}, свободно ${available.length}`);
+      return;
     }
 
     const oldPlaces = rcGroupByDb(r.chairs);
     await this.prisma.reservationChair.deleteMany({ where: { reservationId } });
     await this.prisma.reservationChair.createMany({
-      data: available.slice(0, neededCount).map((c) => ({ reservationId, chairId: c.id })),
+      data: available.slice(0, needed).map((c) => ({ reservationId, chairId: c.id })),
     });
 
-    await ctx.reply(`✅ Стол изменён на Стол ${table.label}`);
-
     const updated = await this.prisma.reservation.findUnique({ where: { id: reservationId }, include: CHAIR_INCLUDE });
-    const newPlaces = rcGroupByDb(updated!.chairs);
-    await this.broadcastChange(reservationId, updated!, `🪑 Стол: ${newPlaces} (было: ${oldPlaces})`);
+    await ctx.reply(bookingText(updated!), mkActionKeyboard(reservationId, updated!.status));
+    await this.broadcastChange(reservationId, updated!, `🪑 Стол: ${rcGroupByDb(updated!.chairs)} (было: ${oldPlaces})`);
   }
 
-  // ─── Session input processor ──────────────────────────────────────────────
+  // ─── Session text input processor ────────────────────────────────────────
 
-  private async processSessionInput(userId: number, session: SessionEntry, text: string, ctx: any) {
-    const { action, reservationId: id } = session;
+  private async processInput(userId: number, s: SessionEntry, text: string, ctx: any) {
+    const { action, reservationId: id } = s;
+
+    const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
+    if (!r) { this.session.delete(userId); await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
 
     try {
-      const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
-      if (!r) {
-        this.sessionState.delete(userId);
-        await ctx.reply(`❌ Бронь #${id} не найдена`); return;
-      }
-
       if (action === 'date') {
         const m = text.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-        if (!m) { await ctx.reply('❌ Неверный формат. Введите дату: ДД.ММ.ГГГГ'); return; }
+        if (!m) { await ctx.reply('❌ Неверный формат. Пример: 25.12.2024'); return; }
         const newDate = `${m[3]}-${m[2]}-${m[1]}`;
-        const oldDate = r.date;
+        const old = r.date;
         await this.prisma.reservation.update({ where: { id }, data: { date: newDate } });
-        this.sessionState.delete(userId);
-        await ctx.reply(`✅ Дата изменена: ${formatDateRu(oldDate)} → ${formatDateRu(newDate)}`);
+        this.session.delete(userId);
+        await ctx.reply(`✅ Дата изменена: ${formatDateRu(old)} → ${formatDateRu(newDate)}`);
         const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
-        await this.broadcastChange(id, updated!, `📅 Дата: ${formatDateRu(newDate)} (было: ${formatDateRu(oldDate)})`);
+        await ctx.reply(bookingText(updated!), mkActionKeyboard(id, updated!.status));
+        await this.broadcastChange(id, updated!, `📅 Дата: ${formatDateRu(newDate)} (было: ${formatDateRu(old)})`);
         return;
       }
 
       if (action === 'time') {
-        const m = text.trim().match(/^(\d{2}:\d{2})-(\d{2}:\d{2})$/);
-        if (!m) { await ctx.reply('❌ Неверный формат. Введите время: ЧЧ:ММ-ЧЧ:ММ'); return; }
+        const m = text.trim().match(/^(\d{2}:\d{2})[–\-](\d{2}:\d{2})$/);
+        if (!m) { await ctx.reply('❌ Неверный формат. Пример: 19:00–23:00'); return; }
         const [newStart, newEnd] = [m[1], m[2]];
-        if (newStart >= newEnd) { await ctx.reply('❌ Время начала должно быть раньше окончания'); return; }
-
-        const currentChairIds = r.chairs.map((rc: any) => rc.chairId);
+        if (newStart >= newEnd) { await ctx.reply('❌ Начало должно быть раньше окончания'); return; }
         const conflict = await this.prisma.reservationChair.findFirst({
           where: {
-            chairId: { in: currentChairIds },
+            chairId: { in: r.chairs.map((rc: any) => rc.chairId) },
             reservationId: { not: id },
             reservation: {
               date: r.date,
@@ -501,134 +426,103 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
           },
         });
         if (conflict) { await ctx.reply('❌ Один из стульев занят другой бронью в это время'); return; }
-
-        const oldTime = `${r.timeStart}-${r.timeEnd}`;
+        const old = `${r.timeStart}–${r.timeEnd}`;
         await this.prisma.reservation.update({ where: { id }, data: { timeStart: newStart, timeEnd: newEnd } });
-        this.sessionState.delete(userId);
-        await ctx.reply(`✅ Время изменено: ${oldTime} → ${newStart}-${newEnd}`);
+        this.session.delete(userId);
+        await ctx.reply(`✅ Время изменено: ${old} → ${newStart}–${newEnd}`);
         const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
-        await this.broadcastChange(id, updated!, `⏰ Время: ${newStart}-${newEnd} (было: ${oldTime})`);
+        await ctx.reply(bookingText(updated!), mkActionKeyboard(id, updated!.status));
+        await this.broadcastChange(id, updated!, `⏰ Время: ${newStart}–${newEnd} (было: ${old})`);
         return;
       }
 
       if (action === 'guests') {
-        const newCount = parseInt(text.trim(), 10);
-        if (isNaN(newCount) || newCount < 1 || newCount > 20) {
-          await ctx.reply('❌ Введите число от 1 до 20'); return;
-        }
-        const currentCount: number = r.chairs.length;
-        if (newCount === currentCount) {
-          this.sessionState.delete(userId);
-          await ctx.reply('Количество гостей не изменилось'); return;
-        }
+        const n = parseInt(text.trim(), 10);
+        if (isNaN(n) || n < 1 || n > 20) { await ctx.reply('❌ Введите число от 1 до 20'); return; }
+        const cur: number = r.chairs.length;
+        if (n === cur) { this.session.delete(userId); await ctx.reply('Количество не изменилось'); return; }
 
-        if (newCount < currentCount) {
-          const toRemove = r.chairs.slice(newCount);
+        if (n < cur) {
+          const toRemove = r.chairs.slice(n);
           await this.prisma.reservationChair.deleteMany({ where: { id: { in: toRemove.map((rc: any) => rc.id) } } });
         } else {
           const tableIds = [...new Set<number>(r.chairs.map((rc: any) => rc.chair.tableId))];
-          const reservedIds = await this.getReservedChairIds(r.date, r.timeStart, r.timeEnd);
-          const currentChairIds = new Set<number>(r.chairs.map((rc: any) => rc.chairId));
-          const need = newCount - currentCount;
-
-          const freeChairs = await this.prisma.chair.findMany({
-            where: {
-              tableId: { in: tableIds },
-              blockedManually: false,
-              id: { notIn: [...reservedIds, ...currentChairIds] },
-            },
-            take: need,
+          const reserved = await this.getReservedIds(r.date, r.timeStart, r.timeEnd);
+          const current = new Set<number>(r.chairs.map((rc: any) => rc.chairId));
+          const free = await this.prisma.chair.findMany({
+            where: { tableId: { in: tableIds }, blockedManually: false, id: { notIn: [...reserved, ...current] } },
+            take: n - cur,
           });
-
-          if (freeChairs.length < need) {
-            await ctx.reply(`❌ Недостаточно мест за столом. Можно добавить: ${freeChairs.length}`); return;
-          }
-          await this.prisma.reservationChair.createMany({
-            data: freeChairs.map((c) => ({ reservationId: id, chairId: c.id })),
-          });
+          if (free.length < n - cur) { await ctx.reply(`❌ Можно добавить максимум ${free.length} мест`); return; }
+          await this.prisma.reservationChair.createMany({ data: free.map((c) => ({ reservationId: id, chairId: c.id })) });
         }
 
-        this.sessionState.delete(userId);
-        await ctx.reply(`✅ Количество гостей: ${currentCount} → ${newCount}`);
+        this.session.delete(userId);
+        await ctx.reply(`✅ Гостей: ${cur} → ${n}`);
         const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
-        await this.broadcastChange(id, updated!, `👥 Персон: ${newCount} (было: ${currentCount})`);
+        await ctx.reply(bookingText(updated!), mkActionKeyboard(id, updated!.status));
+        await this.broadcastChange(id, updated!, `👥 Персон: ${n} (было: ${cur})`);
         return;
       }
 
       if (action === 'name') {
-        const oldName = r.guestName;
-        const newName = text.trim();
-        await this.prisma.reservation.update({ where: { id }, data: { guestName: newName } });
-        this.sessionState.delete(userId);
-        await ctx.reply(`✅ Имя изменено: ${oldName} → ${newName}`);
+        const old = r.guestName;
+        const val = text.trim();
+        await this.prisma.reservation.update({ where: { id }, data: { guestName: val } });
+        this.session.delete(userId);
+        await ctx.reply(`✅ Имя: ${old} → ${val}`);
         const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
-        await this.broadcastChange(id, updated!, `👤 Имя: ${newName} (было: ${oldName})`);
+        await ctx.reply(bookingText(updated!), mkActionKeyboard(id, updated!.status));
+        await this.broadcastChange(id, updated!, `👤 Имя: ${val} (было: ${old})`);
         return;
       }
 
       if (action === 'phone') {
-        const oldPhone = r.guestPhone;
-        const newPhone = text.trim();
-        await this.prisma.reservation.update({ where: { id }, data: { guestPhone: newPhone } });
-        this.sessionState.delete(userId);
-        await ctx.reply(`✅ Телефон изменён: ${oldPhone} → ${newPhone}`);
+        const old = r.guestPhone;
+        const val = text.trim();
+        await this.prisma.reservation.update({ where: { id }, data: { guestPhone: val } });
+        this.session.delete(userId);
+        await ctx.reply(`✅ Телефон: ${old} → ${val}`);
         const updated = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
-        await this.broadcastChange(id, updated!, `📞 Телефон: ${newPhone} (было: ${oldPhone})`);
+        await ctx.reply(bookingText(updated!), mkActionKeyboard(id, updated!.status));
+        await this.broadcastChange(id, updated!, `📞 Телефон: ${val} (было: ${old})`);
         return;
       }
     } catch (err) {
-      this.logger.error(`Session error (${action})`, err);
-      this.sessionState.delete(userId);
-      await ctx.reply('❌ Произошла ошибка. Попробуйте ещё раз');
+      this.logger.error(`Input error (${action})`, err);
+      this.session.delete(userId);
+      await ctx.reply('❌ Произошла ошибка, попробуйте ещё раз');
     }
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private async broadcastChange(id: number, r: any, changeNote: string) {
-    const message = [
+    const msg = [
       `✅ Бронь #${id} изменена`,
       '',
       `👤 ${r.guestName} | 📞 ${r.guestPhone}`,
       `📅 ${formatDateRu(r.date)}`,
-      `⏰ ${r.timeStart} - ${r.timeEnd}`,
+      `⏰ ${r.timeStart} — ${r.timeEnd}`,
       `👥 Персон: ${r.chairs.length}`,
       `🪑 ${rcGroupByDb(r.chairs)}`,
       '',
       changeNote,
     ].join('\n');
-    await this.broadcast([this.chatMain, this.chatOwner, this.chatStaff], message).catch(() => {});
+    await this.broadcast([this.chatMain, this.chatOwner, this.chatStaff], msg).catch(() => {});
   }
 
-  private async getReservedChairIds(date: string, timeStart: string, timeEnd: string): Promise<Set<number>> {
+  private async getReservedIds(date: string, ts: string, te: string): Promise<Set<number>> {
     const rows = await this.prisma.reservationChair.findMany({
-      where: {
-        reservation: {
-          date,
-          status: { not: 'CANCELLED' as any },
-          AND: [{ timeStart: { lt: timeEnd } }, { timeEnd: { gt: timeStart } }],
-        },
-      },
+      where: { reservation: { date, status: { not: 'CANCELLED' as any }, AND: [{ timeStart: { lt: te } }, { timeEnd: { gt: ts } }] } },
       select: { chairId: true },
     });
     return new Set(rows.map((r) => r.chairId));
   }
 
-  private async getReservedChairIdsExcluding(
-    date: string,
-    timeStart: string,
-    timeEnd: string,
-    excludeId: number,
-  ): Promise<Set<number>> {
+  private async getReservedIdsExcluding(date: string, ts: string, te: string, excludeId: number): Promise<Set<number>> {
     const rows = await this.prisma.reservationChair.findMany({
-      where: {
-        reservationId: { not: excludeId },
-        reservation: {
-          date,
-          status: { not: 'CANCELLED' as any },
-          AND: [{ timeStart: { lt: timeEnd } }, { timeEnd: { gt: timeStart } }],
-        },
-      },
+      where: { reservationId: { not: excludeId }, reservation: { date, status: { not: 'CANCELLED' as any }, AND: [{ timeStart: { lt: te } }, { timeEnd: { gt: ts } }] } },
       select: { chairId: true },
     });
     return new Set(rows.map((r) => r.chairId));
@@ -636,11 +530,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
   private toInfo(r: any): ReservationInfo {
     return {
-      guestName: r.guestName,
-      guestPhone: r.guestPhone,
-      date: r.date,
-      timeStart: r.timeStart,
-      timeEnd: r.timeEnd,
+      guestName: r.guestName, guestPhone: r.guestPhone,
+      date: r.date, timeStart: r.timeStart, timeEnd: r.timeEnd,
       chairs: r.chairs.map((rc: any) => ({ label: rc.chair.label, tableLabel: rc.chair.table.label })),
     };
   }
@@ -648,16 +539,52 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private async broadcast(chatIds: string[], message: string) {
     const targets = [...new Set(chatIds.filter(Boolean))];
     await Promise.allSettled(
-      targets.map((id) =>
-        this.bot.telegram.sendMessage(id, message).catch((err) => {
-          this.logger.error(`Failed to send to chat ${id}`, err);
-        }),
-      ),
+      targets.map((id) => this.bot.telegram.sendMessage(id, message).catch((err) => {
+        this.logger.error(`Failed to send to ${id}`, err);
+      })),
     );
   }
 }
 
 // ─── Module-level helpers ─────────────────────────────────────────────────────
+
+function bookingText(r: any): string {
+  return [
+    `🆔 Бронь #${r.id}`,
+    `👤 ${r.guestName} | 📞 ${r.guestPhone}`,
+    `📅 ${formatDateRu(r.date)}`,
+    `⏰ ${r.timeStart} — ${r.timeEnd}`,
+    `👥 Персон: ${r.chairs.length}`,
+    `🪑 ${rcGroupByDb(r.chairs)}`,
+    `📌 ${statusLabel(r.status)}`,
+  ].join('\n');
+}
+
+function mkActionKeyboard(id: number, status: string) {
+  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+  if (status === 'PENDING') {
+    rows.push([
+      Markup.button.callback('✅ Подтвердить', `confirm:${id}`),
+      Markup.button.callback('🚫 Отменить', `cancel:${id}`),
+    ]);
+  } else if (status === 'CONFIRMED') {
+    rows.push([Markup.button.callback('🚫 Отменить', `cancel:${id}`)]);
+  }
+  rows.push([
+    Markup.button.callback('✏️ Редактировать', `edit:${id}`),
+    Markup.button.callback('🗑 Удалить', `delete:${id}`),
+  ]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function mkEditKeyboard(id: number) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('📅 Дата',    `edit_date:${id}`),   Markup.button.callback('⏰ Время',   `edit_time:${id}`)],
+    [Markup.button.callback('👥 Гостей',  `edit_guests:${id}`), Markup.button.callback('🪑 Стол',    `edit_table:${id}`)],
+    [Markup.button.callback('👤 Имя',     `edit_name:${id}`),   Markup.button.callback('📞 Телефон', `edit_phone:${id}`)],
+    [Markup.button.callback('◀️ Назад к брони', `status:${id}`)],
+  ]);
+}
 
 function rcGroupByLabel(chairs: { label: string; tableLabel: string }[]): string {
   const map = new Map<string, string[]>();
@@ -665,9 +592,7 @@ function rcGroupByLabel(chairs: { label: string; tableLabel: string }[]): string
     if (!map.has(c.tableLabel)) map.set(c.tableLabel, []);
     map.get(c.tableLabel)!.push(c.label);
   }
-  return Array.from(map.entries())
-    .map(([t, ls]) => `Стол ${t} (${ls.join(', ')})`)
-    .join(', ');
+  return Array.from(map.entries()).map(([t, ls]) => `Стол ${t} (${ls.join(', ')})`).join(', ');
 }
 
 function rcGroupByDb(chairs: { chair: { label: string; table: { label: string } } }[]): string {
@@ -677,20 +602,18 @@ function rcGroupByDb(chairs: { chair: { label: string; table: { label: string } 
     if (!map.has(t)) map.set(t, []);
     map.get(t)!.push(rc.chair.label);
   }
-  return Array.from(map.entries())
-    .map(([t, ls]) => `Стол ${t} (${ls.join(', ')})`)
-    .join(', ');
+  return Array.from(map.entries()).map(([t, ls]) => `Стол ${t} (${ls.join(', ')})`).join(', ');
 }
 
 function statusLabel(status: string): string {
   if (status === 'CONFIRMED') return '✅ Подтверждена';
   if (status === 'CANCELLED') return '🚫 Отменена';
-  return '⏳ Ожидает';
+  return '⏳ Ожидает подтверждения';
 }
 
 function pluralize(n: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(n);
-  if (abs % 10 === 1 && abs % 100 !== 11) return one;
-  if (abs % 10 >= 2 && abs % 10 <= 4 && (abs % 100 < 10 || abs % 100 >= 20)) return few;
+  const a = Math.abs(n);
+  if (a % 10 === 1 && a % 100 !== 11) return one;
+  if (a % 10 >= 2 && a % 10 <= 4 && (a % 100 < 10 || a % 100 >= 20)) return few;
   return many;
 }
