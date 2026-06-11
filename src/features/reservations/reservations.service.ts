@@ -1,24 +1,22 @@
 import {
   Injectable,
   NotFoundException,
-  ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { TelegramService } from '../telegram/telegram.service';
+import { TablesService } from '../tables/tables.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
-import { ReservationStatus } from '../../shared/types';
 
 @Injectable()
 export class ReservationsService {
   constructor(
     private prisma: PrismaService,
     private telegram: TelegramService,
+    private tables: TablesService,
   ) {}
 
   async create(dto: CreateReservationDto) {
-    const date = new Date(dto.date);
-
     const chairs = await this.prisma.chair.findMany({
       where: { id: { in: dto.chairIds } },
       include: { table: true },
@@ -28,24 +26,20 @@ export class ReservationsService {
       throw new NotFoundException('Один или несколько стульев не найдены');
     }
 
-    const conflict = await this.prisma.reservationChair.findFirst({
-      where: {
-        chairId: { in: dto.chairIds },
-        reservation: {
-          date,
-          status: { not: ReservationStatus.CANCELLED as any },
-          AND: [{ timeStart: { lt: dto.timeEnd } }, { timeEnd: { gt: dto.timeStart } }],
-        },
-      },
-    });
+    const reservedIds = await this.tables.getReservedChairIds(dto.date, dto.timeStart, dto.timeEnd);
+    const busyChairs = dto.chairIds.filter((id) => reservedIds.has(id));
 
-    if (conflict) {
-      throw new BadRequestException('Один или несколько стульев уже забронированы на это время');
+    if (busyChairs.length > 0) {
+      const busyLabels = chairs
+        .filter((c) => busyChairs.includes(c.id))
+        .map((c) => c.label)
+        .join(', ');
+      throw new BadRequestException(`Стулья уже заняты на это время: ${busyLabels}`);
     }
 
     const reservation = await this.prisma.reservation.create({
       data: {
-        date,
+        date: dto.date,
         timeStart: dto.timeStart,
         timeEnd: dto.timeEnd,
         guestName: dto.guestName,
@@ -55,73 +49,74 @@ export class ReservationsService {
         },
       },
       include: {
-        chairs: {
-          include: { chair: { include: { table: true } } },
-        },
-      },
-    });
-
-    this.telegram
-      .sendReservationNotification({
-        guestName: dto.guestName ?? 'Гость',
-        guestPhone: dto.guestPhone ?? '',
-        date,
-        timeStart: dto.timeStart,
-        timeEnd: dto.timeEnd,
-        chairs: chairs.map((c) => ({ label: c.label, tableLabel: c.table.label })),
-      })
-      .catch(() => {});
-
-    return reservation;
-  }
-
-  async findByUser(userId: number) {
-    return this.prisma.reservation.findMany({
-      where: { userId },
-      include: {
         chairs: { include: { chair: { include: { table: true } } } },
       },
-      orderBy: { createdAt: 'desc' },
     });
+
+    this.sendTelegramNotification(dto, chairs).catch(() => {});
+
+    return reservation;
   }
 
   async findAll() {
     return this.prisma.reservation.findMany({
       include: {
-        user: true,
         chairs: { include: { chair: { include: { table: true } } } },
       },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async cancel(id: number, userId: number, userRole: string) {
+  async cancel(id: number) {
     const reservation = await this.ensureExists(id);
 
-    if (userRole === 'CLIENT' && reservation.userId !== userId) {
-      throw new ForbiddenException('Вы можете отменить только свою бронь');
-    }
-
-    if (reservation.status === (ReservationStatus.CANCELLED as any)) {
+    if (reservation.status === 'CANCELLED') {
       throw new BadRequestException('Бронь уже отменена');
     }
 
     return this.prisma.reservation.update({
       where: { id },
-      data: { status: ReservationStatus.CANCELLED as any },
+      data: { status: 'CANCELLED' as any },
     });
   }
 
   async confirm(id: number) {
     const reservation = await this.ensureExists(id);
 
-    if (reservation.status === (ReservationStatus.CONFIRMED as any)) {
+    if (reservation.status === 'CONFIRMED') {
       throw new BadRequestException('Бронь уже подтверждена');
     }
 
     return this.prisma.reservation.update({
       where: { id },
-      data: { status: ReservationStatus.CONFIRMED as any },
+      data: { status: 'CONFIRMED' as any },
+    });
+  }
+
+  private async sendTelegramNotification(
+    dto: CreateReservationDto,
+    chairs: { label: string; table: { label: string } }[],
+  ) {
+    const allChairs = await this.prisma.chair.count();
+    const reservedAfter = await this.prisma.reservationChair.count({
+      where: {
+        reservation: {
+          date: dto.date,
+          status: { not: 'CANCELLED' as any },
+          AND: [{ timeStart: { lt: dto.timeEnd } }, { timeEnd: { gt: dto.timeStart } }],
+        },
+      },
+    });
+    const freeChairsCount = allChairs - reservedAfter;
+
+    await this.telegram.sendReservationNotification({
+      guestName: dto.guestName,
+      guestPhone: dto.guestPhone,
+      date: dto.date,
+      timeStart: dto.timeStart,
+      timeEnd: dto.timeEnd,
+      chairs: chairs.map((c) => ({ label: c.label, tableLabel: c.table.label })),
+      freeChairsCount,
     });
   }
 

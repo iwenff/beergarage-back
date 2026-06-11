@@ -8,9 +8,8 @@ datasource db {
 }
 
 model Table {
-  id        Int     @id @default(autoincrement())
-  label     String  @unique
-  capacity  Int
+  id        Int      @id @default(autoincrement())
+  label     String   @unique
   positionX Int
   positionY Int
   chairs    Chair[]
@@ -26,29 +25,15 @@ model Chair {
   reservationChairs ReservationChair[]
 }
 
-model User {
-  id              Int           @id @default(autoincrement())
-  name            String?
-  phone           String?
-  email           String?       @unique
-  passwordHash    String?
-  role            Role          @default(CLIENT)
-  discountPercent Int           @default(0)
-  createdAt       DateTime      @default(now())
-  reservations    Reservation[]
-}
-
 model Reservation {
   id         Int               @id @default(autoincrement())
-  userId     Int?
-  guestName  String?
-  guestPhone String?
-  date       DateTime          @db.Date
+  guestName  String
+  guestPhone String
+  date       String
   timeStart  String
   timeEnd    String
   status     ReservationStatus @default(PENDING)
   createdAt  DateTime          @default(now())
-  user       User?             @relation(fields: [userId], references: [id])
   chairs     ReservationChair[]
 }
 
@@ -58,6 +43,17 @@ model ReservationChair {
   chairId       Int
   reservation   Reservation @relation(fields: [reservationId], references: [id])
   chair         Chair       @relation(fields: [chairId], references: [id])
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  name            String?
+  phone           String?
+  email           String?  @unique
+  passwordHash    String?
+  role            Role     @default(CLIENT)
+  discountPercent Int      @default(0)
+  createdAt       DateTime @default(now())
 }
 
 enum Role {

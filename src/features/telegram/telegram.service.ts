@@ -5,10 +5,11 @@ import { Telegraf } from 'telegraf';
 type NotificationData = {
   guestName: string;
   guestPhone: string;
-  date: Date;
+  date: string;
   timeStart: string;
   timeEnd: string;
   chairs: { label: string; tableLabel: string }[];
+  freeChairsCount: number;
 };
 
 @Injectable()
@@ -23,34 +24,22 @@ export class TelegramService {
   }
 
   async sendReservationNotification(data: NotificationData) {
-    const { guestName, guestPhone, date, timeStart, timeEnd, chairs } = data;
+    const { guestName, guestPhone, date, timeStart, timeEnd, chairs, freeChairsCount } = data;
 
-    const dateStr = date.toLocaleDateString('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-
-    const tableMap = new Map<string, string[]>();
-    for (const c of chairs) {
-      if (!tableMap.has(c.tableLabel)) tableMap.set(c.tableLabel, []);
-      tableMap.get(c.tableLabel)!.push(c.label);
-    }
-
-    const chairsStr = Array.from(tableMap.entries())
-      .map(([table, labels]) => `  Стол ${table}: стулья ${labels.join(', ')}`)
-      .join('\n');
+    const chairsList = chairs
+      .map((c) => `${c.label} (Стол ${c.tableLabel})`)
+      .join(', ');
 
     const message = [
-      '🍺 Новая бронь',
+      '🍺 Новая бронь!',
       '',
-      `👤 Гость: ${guestName}`,
-      `📞 Телефон: ${guestPhone}`,
-      `📅 Дата: ${dateStr}`,
-      `🕐 Время: ${timeStart} — ${timeEnd}`,
+      `Гость: ${guestName}`,
+      `Телефон: ${guestPhone}`,
+      `Дата: ${date}`,
+      `Время: ${timeStart} - ${timeEnd}`,
+      `Места: ${chairsList}`,
       '',
-      '💺 Забронированные места:',
-      chairsStr,
+      `Свободных мест осталось: ${freeChairsCount}`,
     ].join('\n');
 
     try {

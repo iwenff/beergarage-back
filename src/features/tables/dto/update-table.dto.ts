@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsNumber, Min, IsOptional } from 'class-validator';
+import { IsString, IsInt, IsOptional } from 'class-validator';
 
 export class UpdateTableDto {
   @IsOptional()
@@ -7,14 +7,9 @@ export class UpdateTableDto {
 
   @IsOptional()
   @IsInt()
-  @Min(1)
-  capacity?: number;
-
-  @IsOptional()
-  @IsNumber()
   positionX?: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   positionY?: number;
 }

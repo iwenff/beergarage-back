@@ -6,7 +6,6 @@ import {
   Param,
   Body,
   UseGuards,
-  Request,
   ParseIntPipe,
 } from '@nestjs/common';
 import { ReservationsService } from './reservations.service';
@@ -19,16 +18,9 @@ import { Roles } from '../../shared/decorators/roles.decorator';
 export class ReservationsController {
   constructor(private reservationsService: ReservationsService) {}
 
-  // Публичный эндпоинт — авторизация не требуется
   @Post()
   create(@Body() dto: CreateReservationDto) {
     return this.reservationsService.create(dto);
-  }
-
-  @Get('my')
-  @UseGuards(JwtAuthGuard)
-  getMyReservations(@Request() req) {
-    return this.reservationsService.findByUser(req.user.id);
   }
 
   @Get()
@@ -38,16 +30,17 @@ export class ReservationsController {
     return this.reservationsService.findAll();
   }
 
-  @Patch(':id/cancel')
-  @UseGuards(JwtAuthGuard)
-  cancel(@Param('id', ParseIntPipe) id: number, @Request() req) {
-    return this.reservationsService.cancel(id, req.user.id, req.user.role);
-  }
-
   @Patch(':id/confirm')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('STAFF', 'ADMIN')
   confirm(@Param('id', ParseIntPipe) id: number) {
     return this.reservationsService.confirm(id);
+  }
+
+  @Patch(':id/cancel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMIN')
+  cancel(@Param('id', ParseIntPipe) id: number) {
+    return this.reservationsService.cancel(id);
   }
 }

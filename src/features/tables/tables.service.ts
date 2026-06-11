@@ -17,20 +17,17 @@ export class TablesService {
       return tables.map((t) => ({
         id: t.id,
         label: t.label,
-        capacity: t.capacity,
         positionX: t.positionX,
         positionY: t.positionY,
         chairs: t.chairs.map((c) => ({ id: c.id, label: c.label, positionX: c.positionX, positionY: c.positionY, status: 'free' })),
       }));
     }
 
-    const queryDate = new Date(date);
-    const reservedChairIds = await this.getReservedChairIds(queryDate, timeStart, timeEnd);
+    const reservedChairIds = await this.getReservedChairIds(date, timeStart, timeEnd);
 
     return tables.map((t) => ({
       id: t.id,
       label: t.label,
-      capacity: t.capacity,
       positionX: t.positionX,
       positionY: t.positionY,
       chairs: t.chairs.map((c) => ({
@@ -57,7 +54,7 @@ export class TablesService {
     return this.prisma.table.delete({ where: { id } });
   }
 
-  private async getReservedChairIds(date: Date, timeStart: string, timeEnd: string) {
+  async getReservedChairIds(date: string, timeStart: string, timeEnd: string): Promise<Set<number>> {
     const reservationChairs = await this.prisma.reservationChair.findMany({
       where: {
         reservation: {
