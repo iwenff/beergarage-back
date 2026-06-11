@@ -1,8 +1,10 @@
-import { IsInt, IsDateString, IsString, IsPhoneNumber, Min, Matches } from 'class-validator';
+import { IsArray, IsDateString, IsInt, IsOptional, IsString, ArrayMinSize, Matches } from 'class-validator';
 
 export class CreateReservationDto {
-  @IsInt()
-  tableId: number;
+  @IsArray()
+  @IsInt({ each: true })
+  @ArrayMinSize(1)
+  chairIds: number[];
 
   @IsDateString()
   date: string;
@@ -15,13 +17,11 @@ export class CreateReservationDto {
   @Matches(/^\d{2}:\d{2}$/, { message: 'timeEnd must be HH:MM' })
   timeEnd: string;
 
-  @IsInt()
-  @Min(1)
-  guestsCount: number;
-
+  @IsOptional()
   @IsString()
-  guestName: string;
+  guestName?: string;
 
+  @IsOptional()
   @IsString()
-  guestPhone: string;
+  guestPhone?: string;
 }

@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsNumber, Min } from 'class-validator';
+import { IsString, IsInt, Min } from 'class-validator';
 
 export class CreateTableDto {
   @IsString()
@@ -8,9 +8,9 @@ export class CreateTableDto {
   @Min(1)
   capacity: number;
 
-  @IsNumber()
+  @IsInt()
   positionX: number;
 
-  @IsNumber()
+  @IsInt()
   positionY: number;
 }

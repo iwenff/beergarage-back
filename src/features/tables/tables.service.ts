@@ -2,25 +2,44 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
-import { ReservationStatus } from '../../shared/types';
 
 @Injectable()
 export class TablesService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(date?: string, timeStart?: string, timeEnd?: string) {
-    const tables = await this.prisma.table.findMany();
+    const tables = await this.prisma.table.findMany({
+      include: { chairs: true },
+      orderBy: { id: 'asc' },
+    });
 
     if (!date || !timeStart || !timeEnd) {
-      return tables.map((t) => ({ ...t, isAvailable: null }));
+      return tables.map((t) => ({
+        id: t.id,
+        label: t.label,
+        capacity: t.capacity,
+        positionX: t.positionX,
+        positionY: t.positionY,
+        chairs: t.chairs.map((c) => ({ id: c.id, label: c.label, positionX: c.positionX, positionY: c.positionY, status: 'free' })),
+      }));
     }
 
     const queryDate = new Date(date);
-    const occupiedIds = await this.getOccupiedTableIds(queryDate, timeStart, timeEnd);
+    const reservedChairIds = await this.getReservedChairIds(queryDate, timeStart, timeEnd);
 
     return tables.map((t) => ({
-      ...t,
-      isAvailable: !occupiedIds.has(t.id),
+      id: t.id,
+      label: t.label,
+      capacity: t.capacity,
+      positionX: t.positionX,
+      positionY: t.positionY,
+      chairs: t.chairs.map((c) => ({
+        id: c.id,
+        label: c.label,
+        positionX: c.positionX,
+        positionY: c.positionY,
+        status: reservedChairIds.has(c.id) ? 'reserved' : 'free',
+      })),
     }));
   }
 
@@ -38,22 +57,18 @@ export class TablesService {
     return this.prisma.table.delete({ where: { id } });
   }
 
-  async findFreeForSlot(date: Date, timeStart: string, timeEnd: string) {
-    const allTables = await this.prisma.table.findMany();
-    const occupiedIds = await this.getOccupiedTableIds(date, timeStart, timeEnd);
-    return allTables.filter((t) => !occupiedIds.has(t.id));
-  }
-
-  private async getOccupiedTableIds(date: Date, timeStart: string, timeEnd: string) {
-    const occupied = await this.prisma.reservation.findMany({
+  private async getReservedChairIds(date: Date, timeStart: string, timeEnd: string) {
+    const reservationChairs = await this.prisma.reservationChair.findMany({
       where: {
-        date,
-        status: { not: ReservationStatus.CANCELLED as any },
-        AND: [{ timeStart: { lt: timeEnd } }, { timeEnd: { gt: timeStart } }],
+        reservation: {
+          date,
+          status: { not: 'CANCELLED' as any },
+          AND: [{ timeStart: { lt: timeEnd } }, { timeEnd: { gt: timeStart } }],
+        },
       },
-      select: { tableId: true },
+      select: { chairId: true },
     });
-    return new Set(occupied.map((r) => r.tableId));
+    return new Set(reservationChairs.map((rc) => rc.chairId));
   }
 
   private async ensureExists(id: number) {

@@ -3,14 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { Telegraf } from 'telegraf';
 
 type NotificationData = {
-  tableLabel: string;
+  guestName: string;
+  guestPhone: string;
   date: Date;
   timeStart: string;
   timeEnd: string;
-  guestsCount: number;
-  clientName: string;
-  clientPhone: string;
-  freeTables: { label: string; capacity: number }[];
+  chairs: { label: string; tableLabel: string }[];
 };
 
 @Injectable()
@@ -25,25 +23,34 @@ export class TelegramService {
   }
 
   async sendReservationNotification(data: NotificationData) {
-    const { tableLabel, date, timeStart, timeEnd, guestsCount, clientName, clientPhone, freeTables } = data;
+    const { guestName, guestPhone, date, timeStart, timeEnd, chairs } = data;
 
-    const dateStr = date.toISOString().split('T')[0];
-    const freeList = freeTables.length
-      ? freeTables.map((t) => `  • ${t.label} (${t.capacity} seats)`).join('\n')
-      : '  none';
+    const dateStr = date.toLocaleDateString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+
+    const tableMap = new Map<string, string[]>();
+    for (const c of chairs) {
+      if (!tableMap.has(c.tableLabel)) tableMap.set(c.tableLabel, []);
+      tableMap.get(c.tableLabel)!.push(c.label);
+    }
+
+    const chairsStr = Array.from(tableMap.entries())
+      .map(([table, labels]) => `  Стол ${table}: стулья ${labels.join(', ')}`)
+      .join('\n');
 
     const message = [
-      `New Reservation`,
-      ``,
-      `Table: ${tableLabel}`,
-      `Date: ${dateStr}`,
-      `Time: ${timeStart} — ${timeEnd}`,
-      `Guests: ${guestsCount}`,
-      `Client: ${clientName}`,
-      `Phone: ${clientPhone}`,
-      ``,
-      `Free tables for this slot:`,
-      freeList,
+      '🍺 Новая бронь',
+      '',
+      `👤 Гость: ${guestName}`,
+      `📞 Телефон: ${guestPhone}`,
+      `📅 Дата: ${dateStr}`,
+      `🕐 Время: ${timeStart} — ${timeEnd}`,
+      '',
+      '💺 Забронированные места:',
+      chairsStr,
     ].join('\n');
 
     try {

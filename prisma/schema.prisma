@@ -7,6 +7,59 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Table {
+  id        Int     @id @default(autoincrement())
+  label     String  @unique
+  capacity  Int
+  positionX Int
+  positionY Int
+  chairs    Chair[]
+}
+
+model Chair {
+  id                Int                @id @default(autoincrement())
+  tableId           Int
+  label             String
+  positionX         Int
+  positionY         Int
+  table             Table              @relation(fields: [tableId], references: [id])
+  reservationChairs ReservationChair[]
+}
+
+model User {
+  id              Int           @id @default(autoincrement())
+  name            String?
+  phone           String?
+  email           String?       @unique
+  passwordHash    String?
+  role            Role          @default(CLIENT)
+  discountPercent Int           @default(0)
+  createdAt       DateTime      @default(now())
+  reservations    Reservation[]
+}
+
+model Reservation {
+  id         Int               @id @default(autoincrement())
+  userId     Int?
+  guestName  String?
+  guestPhone String?
+  date       DateTime          @db.Date
+  timeStart  String
+  timeEnd    String
+  status     ReservationStatus @default(PENDING)
+  createdAt  DateTime          @default(now())
+  user       User?             @relation(fields: [userId], references: [id])
+  chairs     ReservationChair[]
+}
+
+model ReservationChair {
+  id            Int         @id @default(autoincrement())
+  reservationId Int
+  chairId       Int
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+  chair         Chair       @relation(fields: [chairId], references: [id])
+}
+
 enum Role {
   CLIENT
   STAFF
@@ -17,41 +70,4 @@ enum ReservationStatus {
   PENDING
   CONFIRMED
   CANCELLED
-}
-
-model User {
-  id              Int           @id @default(autoincrement())
-  name            String
-  phone           String
-  email           String        @unique
-  passwordHash    String
-  role            Role          @default(CLIENT)
-  discountPercent Int           @default(0)
-  createdAt       DateTime      @default(now())
-  reservations    Reservation[]
-}
-
-model Table {
-  id           Int           @id @default(autoincrement())
-  label        String        @unique
-  capacity     Int
-  positionX    Float
-  positionY    Float
-  reservations Reservation[]
-}
-
-model Reservation {
-  id          Int               @id @default(autoincrement())
-  userId      Int?
-  tableId     Int
-  date        DateTime          @db.Date
-  timeStart   String
-  timeEnd     String
-  guestsCount Int
-  guestName   String
-  guestPhone  String
-  status      ReservationStatus @default(PENDING)
-  createdAt   DateTime          @default(now())
-  user        User?             @relation(fields: [userId], references: [id])
-  table       Table             @relation(fields: [tableId], references: [id])
 }

@@ -21,17 +21,17 @@ export class AuthService {
       data: { name: dto.name, phone: dto.phone, email: dto.email, passwordHash },
     });
 
-    return this.signToken(user.id, user.email, user.role as string);
+    return this.signToken(user.id, user.email!, user.role as string);
   }
 
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    const valid = await bcrypt.compare(dto.password, user.passwordHash!);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    return this.signToken(user.id, user.email, user.role as string);
+    return this.signToken(user.id, user.email!, user.role as string);
   }
 
   private signToken(userId: number, email: string, role: string) {
