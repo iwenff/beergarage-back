@@ -1,0 +1,1 @@
+ALTER TABLE "Chair" ADD COLUMN IF NOT EXISTS "blockColor" TEXT;

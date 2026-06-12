@@ -24,7 +24,8 @@ export class TablesService {
           label: c.label,
           positionX: c.positionX,
           positionY: c.positionY,
-          status: c.blockedManually ? 'reserved' : 'free',
+          status: c.blockedManually ? 'blocked' : 'free',
+          blockColor: c.blockedManually ? (c.blockColor ?? '#facc15') : null,
         })),
       }));
     }
@@ -41,7 +42,8 @@ export class TablesService {
         label: c.label,
         positionX: c.positionX,
         positionY: c.positionY,
-        status: c.blockedManually || reservedChairIds.has(c.id) ? 'reserved' : 'free',
+        status: c.blockedManually ? 'blocked' : reservedChairIds.has(c.id) ? 'reserved' : 'free',
+        blockColor: c.blockedManually ? (c.blockColor ?? '#facc15') : null,
       })),
     }));
   }

@@ -89,21 +89,16 @@ export class AdminService {
   }
 
   async updateChairs(tableId: number, dto: UpdateChairsDto) {
-    const reservedIds = dto.chairs.filter((c) => c.status === 'reserved').map((c) => c.id);
-    const freeIds = dto.chairs.filter((c) => c.status === 'free').map((c) => c.id);
-
-    if (reservedIds.length > 0) {
-      await this.prisma.chair.updateMany({
-        where: { id: { in: reservedIds }, tableId },
-        data: { blockedManually: true },
-      });
-    }
-    if (freeIds.length > 0) {
-      await this.prisma.chair.updateMany({
-        where: { id: { in: freeIds }, tableId },
-        data: { blockedManually: false },
-      });
-    }
+    await Promise.all(
+      dto.chairs.map((c) =>
+        this.prisma.chair.update({
+          where: { id: c.id, tableId },
+          data: c.status === 'blocked'
+            ? { blockedManually: true,  blockColor: c.blockColor ?? '#facc15' }
+            : { blockedManually: false, blockColor: null },
+        }),
+      ),
+    );
     return { success: true };
   }
 
