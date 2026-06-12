@@ -94,8 +94,20 @@ export class AdminService {
         this.prisma.chair.update({
           where: { id: c.id, tableId },
           data: c.status === 'blocked'
-            ? { blockedManually: true,  blockColor: c.blockColor ?? '#facc15' }
-            : { blockedManually: false, blockColor: null },
+            ? {
+                blockedManually: true,
+                blockColor:     c.blockColor     ?? '#facc15',
+                blockDate:      c.blockDate      ?? null,
+                blockTimeStart: c.blockTimeStart ?? null,
+                blockTimeEnd:   c.blockTimeEnd   ?? null,
+              }
+            : {
+                blockedManually: false,
+                blockColor:     null,
+                blockDate:      null,
+                blockTimeStart: null,
+                blockTimeEnd:   null,
+              },
         }),
       ),
     );

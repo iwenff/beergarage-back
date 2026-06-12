@@ -42,7 +42,7 @@ export class TablesService {
         label: c.label,
         positionX: c.positionX,
         positionY: c.positionY,
-        status: c.blockedManually ? 'blocked' : reservedChairIds.has(c.id) ? 'reserved' : 'free',
+        status: this.resolveChairStatus(c, reservedChairIds, date, timeStart, timeEnd),
         blockColor: c.blockedManually ? (c.blockColor ?? '#facc15') : null,
       })),
     }));
@@ -60,6 +60,23 @@ export class TablesService {
   async remove(id: number) {
     await this.ensureExists(id);
     return this.prisma.table.delete({ where: { id } });
+  }
+
+  private resolveChairStatus(
+    c: { blockedManually: boolean; blockDate: string | null; blockTimeStart: string | null; blockTimeEnd: string | null; id: number },
+    reservedIds: Set<number>,
+    date: string,
+    timeStart: string,
+    timeEnd: string,
+  ): 'blocked' | 'reserved' | 'free' {
+    if (c.blockedManually) {
+      if (!c.blockDate) return 'blocked';                    // постоянная блокировка
+      if (c.blockDate !== date) return 'free';               // другая дата
+      if (!c.blockTimeStart || !c.blockTimeEnd) return 'blocked';
+      // проверяем пересечение временных слотов
+      return c.blockTimeStart < timeEnd && c.blockTimeEnd > timeStart ? 'blocked' : 'free';
+    }
+    return reservedIds.has(c.id) ? 'reserved' : 'free';
   }
 
   async getReservedChairIds(date: string, timeStart: string, timeEnd: string): Promise<Set<number>> {

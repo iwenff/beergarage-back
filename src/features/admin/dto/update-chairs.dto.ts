@@ -11,6 +11,18 @@ export class ChairStatusDto {
   @IsOptional()
   @IsString()
   blockColor?: string;
+
+  @IsOptional()
+  @IsString()
+  blockDate?: string;
+
+  @IsOptional()
+  @IsString()
+  blockTimeStart?: string;
+
+  @IsOptional()
+  @IsString()
+  blockTimeEnd?: string;
 }
 
 export class UpdateChairsDto {
