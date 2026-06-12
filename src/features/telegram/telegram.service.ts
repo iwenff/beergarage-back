@@ -443,9 +443,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             chairId: { in: r.chairs.map((rc: any) => rc.chairId) },
             reservationId: { not: id },
             reservation: {
-              date: r.date,
-              status: { not: 'CANCELLED' as any },
-              AND: [{ timeStart: { lt: newEnd } }, { timeEnd: { gt: newStart } }],
+              date:      r.date,
+              status:    { not: 'CANCELLED' as any },
+              timeStart: { lt: newEnd },
+              timeEnd:   { gt: newStart },
             },
           },
         });
@@ -567,7 +568,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
   private async getReservedIds(date: string, ts: string, te: string): Promise<Set<number>> {
     const rows = await this.prisma.reservationChair.findMany({
-      where: { reservation: { date, status: { not: 'CANCELLED' as any }, AND: [{ timeStart: { lt: te } }, { timeEnd: { gt: ts } }] } },
+      where: {
+        reservation: {
+          date,
+          status:    { not: 'CANCELLED' as any },
+          timeStart: { lt: te },
+          timeEnd:   { gt: ts },
+        },
+      },
       select: { chairId: true },
     });
     return new Set(rows.map((r) => r.chairId));
@@ -575,7 +583,15 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
   private async getReservedIdsExcluding(date: string, ts: string, te: string, excludeId: number): Promise<Set<number>> {
     const rows = await this.prisma.reservationChair.findMany({
-      where: { reservationId: { not: excludeId }, reservation: { date, status: { not: 'CANCELLED' as any }, AND: [{ timeStart: { lt: te } }, { timeEnd: { gt: ts } }] } },
+      where: {
+        reservationId: { not: excludeId },
+        reservation: {
+          date,
+          status:    { not: 'CANCELLED' as any },
+          timeStart: { lt: te },
+          timeEnd:   { gt: ts },
+        },
+      },
       select: { chairId: true },
     });
     return new Set(rows.map((r) => r.chairId));

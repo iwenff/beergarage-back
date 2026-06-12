@@ -139,9 +139,10 @@ export class ReservationsService {
     const reservedAfter = await this.prisma.reservationChair.count({
       where: {
         reservation: {
-          date: dto.date,
-          status: { not: 'CANCELLED' as any },
-          AND: [{ timeStart: { lt: dto.timeEnd } }, { timeEnd: { gt: dto.timeStart } }],
+          date:      dto.date,
+          status:    { not: 'CANCELLED' as any },
+          timeStart: { lt: dto.timeEnd },
+          timeEnd:   { gt: dto.timeStart },
         },
       },
     });

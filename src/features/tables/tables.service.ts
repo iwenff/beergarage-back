@@ -68,7 +68,8 @@ export class TablesService {
         reservation: {
           date,
           status: { not: 'CANCELLED' as any },
-          AND: [{ timeStart: { lt: timeEnd } }, { timeEnd: { gt: timeStart } }],
+          timeStart: { lt: timeEnd },
+          timeEnd:   { gt: timeStart },
         },
       },
       select: { chairId: true },
