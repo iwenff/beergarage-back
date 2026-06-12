@@ -310,12 +310,36 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const r = await this.prisma.reservation.findUnique({ where: { id }, include: CHAIR_INCLUDE });
     if (!r) { await ctx.reply(`❌ Бронь #${id} не найдена`); return; }
 
+    let guestsPrompt = '';
+    if (field === 'guests') {
+      const cur: number = r.chairs.length;
+      const extraFree = await this.countFreeChairsAtTables(r, id);
+      const max = cur + extraFree;
+      if (extraFree === 0) {
+        guestsPrompt = [
+          `👥 Изменение количества гостей для брони #${id}`,
+          `Сейчас: ${cur}`,
+          ``,
+          `➕ Добавить гостей нельзя — за этим столом нет свободных мест на это время.`,
+          `Можно уменьшить количество (минимум 1) или пересадить за другой стол: нажмите кнопку 🪑 Стол`,
+        ].join('\n');
+      } else {
+        guestsPrompt = [
+          `👥 Введите количество гостей для брони #${id}`,
+          `Сейчас: ${cur} | Максимум за этим столом: ${max}`,
+          ``,
+          `Введите число от 1 до ${max}`,
+          `Если нужно больше — используйте кнопку 🪑 Стол`,
+        ].join('\n');
+      }
+    }
+
     const prompts: Record<EditField, string> = {
-      date: `📅 Введите новую дату для брони #${id}\nТекущая: ${formatDateRu(r.date)}\nФормат: ДД.ММ.ГГГГ`,
-      time: `⏰ Введите новое время для брони #${id}\nТекущее: ${r.timeStart}–${r.timeEnd}\nФормат: ЧЧ:ММ–ЧЧ:ММ`,
-      guests: `👥 Введите количество гостей для брони #${id}\nСейчас: ${r.chairs.length}\nВведите число от 1 до 20`,
-      name: `👤 Введите новое имя гостя для брони #${id}\nСейчас: ${r.guestName}`,
-      phone: `📞 Введите новый телефон для брони #${id}\nСейчас: ${r.guestPhone}`,
+      date:   `📅 Введите новую дату для брони #${id}\nТекущая: ${formatDateRu(r.date)}\nФормат: ДД.ММ.ГГГГ`,
+      time:   `⏰ Введите новое время для брони #${id}\nТекущее: ${r.timeStart}–${r.timeEnd}\nФормат: ЧЧ:ММ–ЧЧ:ММ`,
+      guests: guestsPrompt,
+      name:   `👤 Введите новое имя гостя для брони #${id}\nСейчас: ${r.guestName}`,
+      phone:  `📞 Введите новый телефон для брони #${id}\nСейчас: ${r.guestPhone}`,
     };
 
     this.session.set(userId, { action: field, reservationId: id });
@@ -438,7 +462,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
       if (action === 'guests') {
         const n = parseInt(text.trim(), 10);
-        if (isNaN(n) || n < 1 || n > 20) { await ctx.reply('❌ Введите число от 1 до 20'); return; }
+        if (isNaN(n) || n < 1) { await ctx.reply('❌ Введите целое число от 1 и выше'); return; }
         const cur: number = r.chairs.length;
         if (n === cur) { this.session.delete(userId); await ctx.reply('Количество не изменилось'); return; }
 
@@ -446,6 +470,23 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
           const toRemove = r.chairs.slice(n);
           await this.prisma.reservationChair.deleteMany({ where: { id: { in: toRemove.map((rc: any) => rc.id) } } });
         } else {
+          const extraFree = await this.countFreeChairsAtTables(r, id);
+          const max = cur + extraFree;
+          if (n > max) {
+            if (extraFree === 0) {
+              await ctx.reply(
+                `❌ За этим столом нет свободных мест на это время.\n` +
+                `Сейчас: ${cur} гостей — это максимум.\n` +
+                `Чтобы добавить больше — пересадите за другой стол (кнопка 🪑 Стол).`
+              );
+            } else {
+              await ctx.reply(
+                `❌ За этим столом можно максимум ${max} гостей (сейчас ${cur} + свободно ещё ${extraFree}).\n` +
+                `Введите число от 1 до ${max}, или пересадите за другой стол (кнопка 🪑 Стол).`
+              );
+            }
+            return;
+          }
           const tableIds = [...new Set<number>(r.chairs.map((rc: any) => rc.chair.tableId))];
           const reserved = await this.getReservedIds(r.date, r.timeStart, r.timeEnd);
           const current = new Set<number>(r.chairs.map((rc: any) => rc.chairId));
@@ -453,7 +494,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             where: { tableId: { in: tableIds }, blockedManually: false, id: { notIn: [...reserved, ...current] } },
             take: n - cur,
           });
-          if (free.length < n - cur) { await ctx.reply(`❌ Можно добавить максимум ${free.length} мест`); return; }
           await this.prisma.reservationChair.createMany({ data: free.map((c) => ({ reservationId: id, chairId: c.id })) });
         }
 
@@ -496,6 +536,19 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private async countFreeChairsAtTables(r: any, excludeReservationId: number): Promise<number> {
+    const tableIds = [...new Set<number>(r.chairs.map((rc: any) => rc.chair.tableId))];
+    const reserved = await this.getReservedIdsExcluding(r.date, r.timeStart, r.timeEnd, excludeReservationId);
+    const currentChairIds = r.chairs.map((rc: any) => rc.chairId);
+    return this.prisma.chair.count({
+      where: {
+        tableId: { in: tableIds },
+        blockedManually: false,
+        id: { notIn: [...reserved, ...currentChairIds] },
+      },
+    });
+  }
 
   private async broadcastChange(id: number, r: any, changeNote: string) {
     const msg = [
